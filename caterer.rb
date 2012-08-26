@@ -256,10 +256,10 @@ class Host < BaseVIMObject
     attr_accessor :fqdn
     attr_accessor :actor
 
-    def initialize(actor, instance, env, domain, roles, networks, template, cpu_count, memoryGB, folder)
+    def initialize(actor, instance, env, domain, roles, networks, template, cpu_count, memoryGB, folder, resource_pool)
         super()
-        @actor, @instance, @env, @domain, @networks, @template, @cpu_count, @memoryGB, @folder =
-            actor, instance, env, domain, networks, template, cpu_count, memoryGB, folder
+        @actor, @instance, @env, @domain, @networks, @template, @cpu_count, @memoryGB, @folder, @resource_pool =
+            actor, instance, env, domain, networks, template, cpu_count, memoryGB, folder, resource_pool
 
         @name = @actor + @instance.to_s
         @vm_name = "#{@name}-#{@env}"
@@ -384,6 +384,7 @@ class Host < BaseVIMObject
             "--cips", "#{@ip}/#{@networks[0].subnet.split('/')[1]}",
             "--chostname", "#{@vm_name}",
             "--dest-folder", "#{@folder}",
+            "--resource-pool", "#{@resource_pool}",
             "--start", "true",
             "-VV"
         ]
@@ -683,7 +684,8 @@ class Caterer
                                 @templates[props["template"].to_sym],
                                 props["cpus"],
                                 props["memoryGB"],
-                                @vc[@templates[props["template"].to_sym].vc]['vm-folder'])
+                                @vc[@templates[props["template"].to_sym].vc]['vm-folder'],
+                                @vc[@templates[props["template"].to_sym].vc]['resource-pool'])
 
                 @actors[actor] << host
             end
