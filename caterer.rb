@@ -273,10 +273,18 @@ class Host < BaseVIMObject
         @node = Chef::Node.new
         @node.name = @fqdn
         @node.chef_environment = @env
+        @roles = "'"
+
         roles.each do |role|
 
             @node.run_list << Chef::RunList::RunListItem.new("role[#{role}]")
+
+            if @roles.size > 1
+                @roles += ','
+            end
+            @roles += "role[#{role}]"
         end
+        @roles += "'"
 
         @@cloning_mutex ||= Mutex.new()
     end
@@ -473,16 +481,12 @@ class Host < BaseVIMObject
             "-x", "#{@template.user}",
             "-i", "#{@template.key}",
             "--environment", "#{@env}",
+            "--run-list", "#{@roles}",
             "-VV"
         ]
 
         if @template.os == 'ubuntu'
             cmd << "--sudo"
-        end
-
-        if $bootstrap.has_key? 'role'
-            cmd << "--run-list"
-            cmd << "role[#{$bootstrap['role']}]"
         end
 
         # TODO read the key itself from the template, not a file name
@@ -536,7 +540,19 @@ class Host < BaseVIMObject
                 end,
                 :next => {
                     true => {:state => :update_node, :msg => "Host is up & running" },
-                    false => {:state => :delete, :msg => "VM exists but is not responding" }
+                    false => {:state => :vm_exists, :msg => "VM exists but is not responding" }
+                }
+            },
+            :vm_exists => {
+                :task => Task.new(:thread) do |task, kwargs|
+                    self.vm_exists? do |dict|
+                        task.set_rc(dict[:rc]) if dict[:rc] != nil
+                        task.send_message(dict[:msg]) if dict[:msg] != nil
+                    end
+                end,
+                :next => {
+                    true => {:state => :delete, :msg => "Host exists, but is not respondind" },
+                    false => {:state => :verify_template, :msg => "VM does not exist" }
                 }
             },
             :verify_template => {
