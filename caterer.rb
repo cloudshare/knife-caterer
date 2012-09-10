@@ -705,7 +705,6 @@ class Caterer
         db = Chef::DataBag.load("#{$options[:environment]}/#{$options[:composition]}")
 
         @vc = db["vc"]
-        $bootstrap = db["bootstrap"]
 
         db["networks"].each_pair do |network, props|
 
@@ -783,7 +782,6 @@ class Caterer
 end
 
 $options = {}
-$bootstrap = {}
 
 begin
     parser = OptionParser.new do |opts|
