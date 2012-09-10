@@ -223,6 +223,7 @@ class Template < BaseVIMObject
     attr_accessor :name
     attr_accessor :user
     attr_accessor :key
+    attr_accessor :os
 
     def initialize(name, vc, user, key, os, folder)
         super()
@@ -256,24 +257,22 @@ class Host < BaseVIMObject
     attr_accessor :fqdn
     attr_accessor :actor
 
-    def initialize(actor, instance, env, domain, roles, networks, template, cpu_count, memoryGB, folder, resource_pool)
+    def initialize(actor, instance, env, domain, roles, networks, template, cpu_count, memoryGB, address, folder, resource_pool)
         super()
-        @actor, @instance, @env, @domain, @networks, @template, @cpu_count, @memoryGB, @folder, @resource_pool =
-            actor, instance, env, domain, networks, template, cpu_count, memoryGB, folder, resource_pool
+        @actor, @instance, @env, @domain, @networks, @template, @cpu_count, @memoryGB, @address, @folder, @resource_pool =
+            actor, instance, env, domain, networks, template, cpu_count, memoryGB, address, folder, resource_pool
 
         @name = @actor + @instance.to_s
         @vm_name = "#{@name}-#{@env}"
         @fqdn = "#{@vm_name}.#{@domain}"
-        @exists = nil
+        @vm_exists = nil
+        @node_exists = nil
         @ip = nil
         @pingable = nil
-
-        @provisioning_status = {}
 
         @node = Chef::Node.new
         @node.name = @fqdn
         @node.chef_environment = @env
-        @node.normal_attrs['actor_name'] = @actor
         roles.each do |role|
 
             @node.run_list << Chef::RunList::RunListItem.new("role[#{role}]")
@@ -282,23 +281,63 @@ class Host < BaseVIMObject
         @@cloning_mutex ||= Mutex.new()
     end
 
-    def exists?(&block)
-        if @exists == nil
+    def vm_exists?(&block)
+        if @vm_exists == nil
             # search for the VM in the VC
-            @exists = get_vm_list(@folder).find do |vm|
+            @vm_exists = get_vm_list(@folder).find do |vm|
                 vm.name == @vm_name
             end
 
-            if !@exists
+            if !@vm_exists
                 yield :msg => "VM #{@vm_name} not found in VC"
             end
         end
 
-        @exists != nil
+        @vm_exists != nil
     rescue Exception => e
         puts e.to_s
         puts e.backtrace
         false
+    end
+
+    def node_exists?(&block)
+        if @node_exists == nil
+            # search for the node in the chef server
+            nodes = $rest_client.get_rest('/nodes')
+            if nodes.has_key?(@fqdn)
+                @node_exists = true
+            else
+                yield :msg => "Node #{@fqdn} not found in Chef server"
+            end
+        end
+
+        @node_exists != nil
+    rescue Exception => e
+        puts e.to_s
+        puts e.backtrace
+        false
+    end
+
+    def node_resolvable?(&block)
+        # Resolve the FQDN
+        if @ip == nil
+            begin
+                # try to get the machine's IP address
+                node = $rest_client.get_rest("/nodes/#{fqdn}")
+                interfaces = node.automatic_attrs['network']['interfaces']
+                default_if = interfaces[node.automatic_attrs['network']['default_interface']]
+                addresses = default_if['addresses'].keys
+                @ip = addresses.find do |address|
+                    default_if['addresses'][address]['family'] == 'inet'
+                end
+
+            rescue
+                yield :msg => "Failed to resolve node #{@fqdn}"
+                false
+            end
+        end
+
+        @ip != nil
     end
 
     def answers_ping?(&block)
@@ -381,7 +420,7 @@ class Host < BaseVIMObject
             "--cgw", "#{@networks[0].gateway}",
             "--cdomain", "#{@networks[0].domain}",
             "--cdnsips", "#{@networks[0].dns}",
-            "--cips", "#{@ip}/#{@networks[0].subnet.split('/')[1]}",
+            "--cips", "#{@address}/#{@networks[0].subnet.split('/')[1]}",
             "--chostname", "#{@vm_name}",
             "--dest-folder", "#{@folder}",
             "--resource-pool", "#{@resource_pool}",
@@ -398,15 +437,15 @@ class Host < BaseVIMObject
             end
         end
 
+        provisioning_status = {}
         @@cloning_mutex.synchronize do
             yield :msg => "running external command: #{cmd.join(' ')}\n"
 
-            @provisioning_status = {}
-            while !@provisioning_status.has_key?(:state) or @provisioning_status[:state] != :finished
-                @provisioning_status = @provisioning_ao.run()
+            while !provisioning_status.has_key?(:state) or provisioning_status[:state] != :finished
+                provisioning_status = @provisioning_ao.run()
 
                 begin
-                    yield :msg => @provisioning_status[:output].read_nonblock(1024)
+                    yield :msg => provisioning_status[:output].read_nonblock(1024)
                 rescue IOError => e
                 rescue EOFError => e
                 rescue Errno::EAGAIN => e
@@ -416,7 +455,7 @@ class Host < BaseVIMObject
             end
         end
 
-        @provisioning_status[:rc] == 0
+        provisioning_status[:rc] == 0
     rescue Exception => e
         puts e.to_s
         puts e.backtrace
@@ -428,16 +467,25 @@ class Host < BaseVIMObject
         cmd = [
             '/usr/bin/knife',
             'bootstrap',
-            "#{@fqdn}",
+            "#{@address}",
             "-c", "#{$options[:config_file]}",
             "--bootstrap-version", "10.12.0",
             "-x", "#{@template.user}",
             "-i", "#{@template.key}",
-            "--sudo",
             "--environment", "#{@env}",
-            "--run-list", "role[cloudshare-ubuntu-base]", 
             "-VV"
         ]
+
+        if @template.os == 'ubuntu'
+            cmd << "--sudo"
+        end
+
+        if $bootstrap.has_key? 'role'
+            cmd << "--run-list"
+            cmd << "role[#{$bootstrap['role']}]"
+        end
+
+        # TODO read the key itself from the template, not a file name
 
         yield :msg => "running external command: #{cmd.join(' ')}\n"
 
@@ -446,7 +494,9 @@ class Host < BaseVIMObject
         else
             Process.exec('./test.sh', '10')
         end
-    rescue
+    rescue Exception => e
+        puts e.to_s
+        puts e.backtrace
         false
     end
 
@@ -455,38 +505,26 @@ class Host < BaseVIMObject
         @states ||= {
             :start => {
                 :task => Task.new(:thread) do |task, kwargs|
-                    self.exists? do |dict|
+                    self.node_exists? do |dict|
                         task.set_rc(dict[:rc]) if dict[:rc] != nil
                         task.send_message(dict[:msg]) if dict[:msg] != nil
                     end
                 end,
                 :next => {
-                    true => {:state => :resolve_existing_vm, :msg => "VM found" },
-                    false => {:state => :resolve, :msg => "VM not found" }
+                    true => {:state => :resolve_node, :msg => "Node found" },
+                    false => {:state => :verify_template, :msg => "Node not found" }
                 }
             },
-            :resolve_existing_vm => {
+            :resolve_node => {
                 :task => Task.new(:thread) do |task, kwargs|
-                    self.dns_resolvable? do |dict|
+                    self.node_resolvable? do |dict|
                         task.set_rc(dict[:rc]) if dict[:rc] != nil
                         task.send_message(dict[:msg]) if dict[:msg] != nil
                     end
                 end,
                 :next => {
                     true => {:state => :ping, :msg => "IP address resolved" },
-                    false => {:state => :error, :msg => "IP address not resolved" }
-                }
-            },
-            :resolve => {
-                :task => Task.new(:thread) do |task, kwargs|
-                    self.dns_resolvable? do |dict|
-                        task.set_rc(dict[:rc]) if dict[:rc] != nil
-                        task.send_message(dict[:msg]) if dict[:msg] != nil
-                    end
-                end,
-                :next => {
-                    true => {:state => :verify_template, :msg => "IP address resolved" },
-                    false => {:state => :error, :msg => "IP address not resolved" }
+                    false => {:state => :verify_template, :msg => "IP address not resolved" }
                 }
             },
             :ping => {
@@ -651,6 +689,7 @@ class Caterer
         db = Chef::DataBag.load("#{$options[:environment]}/#{$options[:composition]}")
 
         @vc = db["vc"]
+        $bootstrap = db["bootstrap"]
 
         db["networks"].each_pair do |network, props|
 
@@ -673,21 +712,27 @@ class Caterer
 
         db["actors"].each_pair do |actor, props|
 
-            props["instances"].times do |instance|
+            if props['instances'] == props['addresses'].size
 
-                host = Host.new(actor,
-                                instance + 1, 
-                                $options[:environment],
-                                @networks[props["networks"][0].to_sym].domain,
-                                props["roles"],
-                                props["networks"].collect {|net| @networks[net.to_sym]},
-                                @templates[props["template"].to_sym],
-                                props["cpus"],
-                                props["memoryGB"],
-                                @vc[@templates[props["template"].to_sym].vc]['vm-folder'],
-                                @vc[@templates[props["template"].to_sym].vc]['resource-pool'])
+                props["instances"].times do |instance|
 
-                @actors[actor] << host
+                    host = Host.new(actor,
+                                    instance + 1, 
+                                    $options[:environment],
+                                    @networks[props["networks"][0].to_sym].domain,
+                                    props["roles"],
+                                    props["networks"].collect {|net| @networks[net.to_sym]},
+                                    @templates[props["template"].to_sym],
+                                    props["cpus"],
+                                    props["memoryGB"],
+                                    props["addresses"][instance],
+                                    @vc[@templates[props["template"].to_sym].vc]['vm-folder'],
+                                    @vc[@templates[props["template"].to_sym].vc]['resource-pool'])
+
+                    @actors[actor] << host
+                end
+            else
+                puts "Actor #{actor} instances number differs from the number of provided addresses"
             end
         end
     end
@@ -722,6 +767,7 @@ class Caterer
 end
 
 $options = {}
+$bootstrap = {}
 
 begin
     parser = OptionParser.new do |opts|
