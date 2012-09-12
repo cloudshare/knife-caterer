@@ -353,7 +353,7 @@ class Host < BaseVIMObject
         # actually listen on that port, as actively rejecting the connection
         # attempt is good enough to mean that the host is up.
         if !@pingable
-            @pingable = Ping.pingecho(@fqdn)
+            @pingable = Ping.pingecho(@address)
             if !@pingable
                 yield :msg => "host #{@fqdn} is not responding to ping"
             end
