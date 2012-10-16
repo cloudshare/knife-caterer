@@ -84,7 +84,7 @@ module ActiveObject
         if @state == :running
             if @thread and (wait ? @thread.join() : @thread.join(0))
 
-                @rc = @thread.value.to_i if @thread.value.respond_to?(:to_i)
+                @rc = @thread.value.to_i if @thread.value.respond_to?(:to_i) and @rc == nil
                 @thread = nil
                 @state = :finished
             end
@@ -103,7 +103,7 @@ module ActiveObject
         if @state == :running
             if @thread and (wait ? @thread.join() : @thread.join(0))
 
-                @rc = @thread.value
+                @rc = @thread.value if @rc == nil
                 @thread = nil
                 @state = :finished
             end
@@ -273,18 +273,14 @@ class Host < BaseVIMObject
         @node = Chef::Node.new
         @node.name = @fqdn
         @node.chef_environment = @env
-        @roles = "'"
 
+        role_list = []
         roles.each do |role|
 
             @node.run_list << Chef::RunList::RunListItem.new("role[#{role}]")
-
-            if @roles.size > 1
-                @roles += ','
-            end
-            @roles += "role[#{role}]"
+            role_list << "role[#{role}]"
         end
-        @roles += "'"
+        @roles = "'#{role_list * ','}'"
 
         @@cloning_mutex ||= Mutex.new()
     end
@@ -353,13 +349,38 @@ class Host < BaseVIMObject
         # actually listen on that port, as actively rejecting the connection
         # attempt is good enough to mean that the host is up.
         if !@pingable
-            @pingable = Ping.pingecho(@address)
+            service = @template.os != "windows" ? 22 : 3389
+
+            if $options[:verbose]
+                yield :msg => "#{@fqdn}: pinging #{@address}:#{service}"
+            end
+
+            @pingable = Ping.pingecho(@address, 10, service)
+
             if !@pingable
-                yield :msg => "host #{@fqdn} is not responding to ping"
+                yield :msg => "#{@fqdn}: host is not responding to ping"
             end
         end
 
         @pingable != nil and @pingable != false
+    rescue
+        puts e.to_s
+    end
+
+    def wait_for_ping(&block)
+        if $options[:dryrun]
+            count = 5
+            while count > 0
+                count -= 1
+                sleep 5
+            end
+        else
+            while not answers_ping?(&block)
+                sleep 10
+            end
+        end
+
+        true
     end
 
     def dns_resolvable?(&block)
@@ -447,7 +468,7 @@ class Host < BaseVIMObject
 
         provisioning_status = {}
         @@cloning_mutex.synchronize do
-            yield :msg => "running external command: #{cmd.join(' ')}\n"
+            yield :msg => "running external command: #{cmd * ' '}\n"
 
             while !provisioning_status.has_key?(:state) or provisioning_status[:state] != :finished
                 provisioning_status = @provisioning_ao.run()
@@ -491,7 +512,7 @@ class Host < BaseVIMObject
 
         # TODO read the key itself from the template, not a file name
 
-        yield :msg => "running external command: #{cmd.join(' ')}\n"
+        yield :msg => "running external command: #{cmd * ' '}\n"
 
         if $options[:dryrun] != true
             Process.exec(*cmd)
@@ -607,8 +628,7 @@ class Host < BaseVIMObject
             },
             :ready_for_bootstrap => {
                 :task => Task.new(:thread) do |task, kwargs|
-                    sleep 10
-                    self.answers_ping? do |dict|
+                    self.wait_for_ping do |dict|
                         task.set_rc(dict[:rc]) if dict[:rc] != nil
                         task.send_message(dict[:msg]) if dict[:msg] != nil
                     end
@@ -656,6 +676,7 @@ class Host < BaseVIMObject
                 if $options[:verbose]
                     puts output
                 end
+
             rescue IOError => e
             rescue EOFError => e
             rescue Errno::EAGAIN => e
@@ -663,7 +684,7 @@ class Host < BaseVIMObject
 
             if status[:rc] != nil
                 if $options[:verbose]
-                    puts "State #{@state} finished with code #{status[:rc]}"
+                    puts "#{@fqdn}: state #{@state} finished with code #{status[:rc]}"
                 end
 
                 @states[@state][:task].reset()
@@ -757,23 +778,25 @@ class Caterer
 
         while repeat
             repeat = false
-            should_sleep = true
+            progress_made = false
 
             @actors.each_pair do |name, hosts|
 
                 hosts.each do |host|
 
-                    in_progress, made_progress, status = host.run()
+                    host_in_progress, host_made_progress, status = host.run()
 
-                    repeat ||= in_progress
-                    should_sleep = false if made_progress and in_progress
+                    repeat ||= host_in_progress
+                    progress_made ||= host_made_progress
                 end
             end
 
-            if should_sleep
-                sleep(1)
-            else
-                puts Chef::Knife::Core::TextFormatter.new(@actors, @ui).formatted_data #if $options[:verbose]
+            if repeat
+                if !progress_made
+                    sleep(1)
+                else
+                    puts Chef::Knife::Core::TextFormatter.new(@actors, @ui).formatted_data #if $options[:verbose]
+                end
             end
         end
 
