@@ -2,7 +2,7 @@
 
 require 'rubygems'
 require 'optparse'
-require 'ping'
+require 'net/ping/tcp'
 require 'resolv'
 require 'thread'
 
@@ -355,7 +355,7 @@ class Host < BaseVIMObject
                 yield :msg => "#{@fqdn}: pinging #{@address}:#{service}"
             end
 
-            @pingable = Ping.pingecho(@address, 10, service)
+            @pingable = Net::Ping::TCP.new(@address, service).ping?
 
             if !@pingable
                 yield :msg => "#{@fqdn}: host is not responding to ping"
