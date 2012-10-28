@@ -462,7 +462,7 @@ class Host < BaseVIMObject
             if $options[:dryrun] != true
                 Process.exec(*kwargs[:cmd])
             else
-                Process.exec('./test.sh', '10')
+                Process.exec('/bin/echo "Sleeping..." && /bin/sleep 10')
             end
         end
 
@@ -517,7 +517,7 @@ class Host < BaseVIMObject
         if $options[:dryrun] != true
             Process.exec(*cmd)
         else
-            Process.exec('./test.sh', '10')
+            Process.exec('/bin/echo "Sleeping..." && /bin/sleep 10')
         end
     rescue Exception => e
         puts e.to_s
