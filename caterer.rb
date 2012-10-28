@@ -540,6 +540,26 @@ class Host < BaseVIMObject
         false
     end
 
+    def node_ready?()
+
+        if @accept_test and @accept_test.has_key?("tester")
+            require "#{Chef::Config[:tests_path]}/#{@accept_test['tester']}.rb"
+
+            if @accept_test.has_key?("args")
+                send("test_#{@accept_test['tester']}", *@accept_test['args'], $options[:dryrun])
+            else
+                send("test_#{@accept_test['tester']}", $options[:dryrun])
+            end
+        else
+            true
+        end
+
+    rescue Exception => e
+        puts e.to_s
+        puts e.backtrace
+        false
+    end
+
     def run
 
         @states ||= {
@@ -686,6 +706,17 @@ class Host < BaseVIMObject
                     self.update_node do |dict|
                         task.set_rc(dict[:rc]) if dict[:rc] != nil
                         task.send_message(dict[:msg]) if dict[:msg] != nil
+                    end
+                end,
+                :next => {
+                    true => {:state => :test_node, :msg => "VM provisioning complete" },
+                    false => {:state => :error, :msg => "Node update failed" }
+                }
+            },
+            :test_node => {
+                :task => Task.new(:thread) do |task, kwargs|
+                    self.wait_for_state do
+                        self.node_ready?
                     end
                 end,
                 :next => {
