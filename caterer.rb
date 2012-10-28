@@ -269,14 +269,19 @@ class Host < BaseVIMObject
 
     attr_accessor :fqdn
     attr_accessor :actor
+    attr_accessor :phase
 
-    def initialize(actor, instance, env, domain, roles, networks, template, cpu_count, memoryGB, address, folder, resource_pool)
+    def initialize(actor, instance, env, domain, roles, networks, template,
+                   cpu_count, memoryGB, address, phase, accept_test, folder,
+                   resource_pool)
         super()
-        @actor, @instance, @env, @domain, @networks, @template, @cpu_count, @memoryGB, @address, @folder, @resource_pool =
-            actor, instance, env, domain, networks, template, cpu_count, memoryGB, address, folder, resource_pool
+        @actor, @instance, @env, @domain, @networks, @template, @cpu_count,
+            @memoryGB, @address, @phase, @accept_test, @folder, @resource_pool =
+            actor, instance, env, domain, networks, template, cpu_count,
+            memoryGB, address, phase, accept_test, folder, resource_pool
 
         @name = @actor + @instance.to_s
-        @vm_name = "#{@name}-#{@env}"
+        @vm_name = "#{@name}"
         @fqdn = "#{@vm_name}.#{@domain}"
         @vm_exists = nil
         @node_exists = nil
@@ -450,7 +455,7 @@ class Host < BaseVIMObject
     def provision(&block)
 
         cmd = [
-            '/usr/bin/knife',
+            '/Users/leeor/.rvm/gems/ruby-1.9.3-p286/bin/knife',
             'vsphere',
             'vm',
             'clone',
@@ -461,16 +466,21 @@ class Host < BaseVIMObject
             "--ccpu", "#{@cpu_count}",
             "--cram", "#{@memoryGB}",
             "--cvlan", "#{@networks[0].name}",
-            "--cgw", "#{@networks[0].gateway}",
-            "--cdomain", "#{@networks[0].domain}",
-            "--cdnsips", "#{@networks[0].dns}",
-            "--cips", "#{@address}/#{@networks[0].subnet.split('/')[1]}",
             "--chostname", "#{@vm_name}",
             "--dest-folder", "#{@folder}",
             "--resource-pool", "#{@resource_pool}",
             "--start", "true",
             "-VV"
         ]
+
+        if @address != nil
+            cmd += [
+                "--cgw", "#{@networks[0].gateway}",
+                "--cdomain", "#{@networks[0].domain}",
+                "--cdnsips", "#{@networks[0].dns}",
+                "--cips", "#{@address}/#{@networks[0].subnet.split('/')[1]}",
+            ]
+        end
 
         @provisioning_ao = Task.new(:fork, options={:kwargs => {:cmd => cmd}}) do |task, kwargs|
 
@@ -509,7 +519,7 @@ class Host < BaseVIMObject
     def bootstrap(&block)
 
         cmd = [
-            '/usr/bin/knife',
+            '/Users/leeor/.rvm/gems/ruby-1.9.3-p286/bin/knife',
             'bootstrap',
             "#{@address}",
             "-c", "#{$options[:config_file]}",
@@ -770,7 +780,7 @@ class Host < BaseVIMObject
     end
 
     def to_s()
-        "#{@vm_name}(@state=#{@state})"#, @status=\"#{@status}\')"
+        "#{@fqdn}(@state=#{@state})"
     end
 end
 
@@ -782,6 +792,7 @@ class Caterer
         @tasks = Hash.new { |hash, key| hash[key] = [] }
         @templates = {}
         @networks = {}
+        @last_phase = 0
 
         @ui = Chef::Knife::UI.new($stdout, $stderr, $stdin, Chef::Config)
 
@@ -810,33 +821,40 @@ class Caterer
 
         db["actors"].each_pair do |actor, props|
 
-            if props['instances'] == props['addresses'].size
+            @last_phase = props['phase'] if props['phase'] > @last_phase
 
-                props["instances"].times do |instance|
+            props["instances"].times do |instance|
 
-                    host = Host.new(actor,
-                                    instance + 1, 
-                                    $options[:environment],
-                                    @networks[props["networks"][0].to_sym].domain,
-                                    props["roles"],
-                                    props["networks"].collect {|net| @networks[net.to_sym]},
-                                    @templates[props["template"].to_sym],
-                                    props["cpus"],
-                                    props["memoryGB"],
-                                    props["addresses"][instance],
-                                    @vc[@templates[props["template"].to_sym].vc]['vm-folder'],
-                                    @vc[@templates[props["template"].to_sym].vc]['resource-pool'])
-
-                    @actors[actor] << host
+                address = nil
+                if props["addresses"].length > 0
+                    address = props["addresses"][instance]
                 end
-            else
-                puts "Actor #{actor} instances number differs from the number of provided addresses"
+
+                host = Host.new(actor,
+                                instance + 1, 
+                                $options[:environment],
+                                @networks[props["networks"][0].to_sym].domain,
+                                props["roles"],
+                                props["networks"].collect {|net| @networks[net.to_sym]},
+                                @templates[props["template"].to_sym],
+                                props["cpus"],
+                                props["memoryGB"],
+                                address,
+                                props["phase"],
+                                props["acceptance-test"],
+                                @vc[@templates[props["template"].to_sym].vc]['vm-folder'],
+                                @vc[@templates[props["template"].to_sym].vc]['resource-pool'])
+
+                @actors[actor] << host
             end
         end
+
+        @last_phase = $options[:final_phase] if $options.has_key?(:final_phase)
     end
 
     def run()
         repeat = true
+        phase = $options[:start_phase]
 
         while repeat
             repeat = false
@@ -845,6 +863,8 @@ class Caterer
             @actors.each_pair do |name, hosts|
 
                 hosts.each do |host|
+
+                    next if host.phase != phase
 
                     host_in_progress, host_made_progress, status = host.run()
 
@@ -859,6 +879,12 @@ class Caterer
                 else
                     puts Chef::Knife::Core::TextFormatter.new(@actors, @ui).formatted_data #if $options[:verbose]
                 end
+            else
+                phase += 1
+
+                if phase <= @last_phase
+                    repeat = true
+                end
             end
         end
 
@@ -866,7 +892,9 @@ class Caterer
     end
 end
 
-$options = {}
+$options = {
+    :start_phase => 0
+}
 
 begin
     parser = OptionParser.new do |opts|
@@ -882,6 +910,19 @@ begin
 
         opts.on('-d', '--description [DESCRIPTION]', 'Environment composition') do |d|
             $options[:composition] = d
+        end
+
+        opts.on('-p', '--phase [PHASE NUM]', 'Only run this phase') do |d|
+            $options[:start_phase] = d.to_i
+            $options[:final_phase] = d.to_i
+        end
+
+        opts.on('-s', '--start-phase [PHASE NUM]', 'Start with this phase (default:0)') do |d|
+            $options[:start_phase] = d.to_i
+        end
+
+        opts.on('-f', '--final-phase [PHASE NUM]', 'Stop at this phase') do |d|
+            $options[:final_phase] = d.to_i
         end
 
         opts.on('-n', '--dry-run', 'Calculate and report only, take no action') do |d|
