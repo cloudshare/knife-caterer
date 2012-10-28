@@ -165,6 +165,19 @@ class BaseVIMObject
         @@cache[:network_list]
     end
 
+    def get_vm_state(folder, vmname, &block)
+
+        bc = get_base_command()
+        f = bc.find_folder(folder)
+        vm = bc.find_in_folder(f, RbVmomi::VIM::VirtualMachine, vmname) or
+            yield :none, nil
+
+        state = vm.runtime.powerState
+        ip = vm.guest.ipAddress
+
+        yield state, ip
+    end
+
     def get_vm_list(folder)
 
         folder_sym = folder.length == 0 ? :root : folder.to_sym
@@ -285,6 +298,19 @@ class Host < BaseVIMObject
         @@cloning_mutex ||= Mutex.new()
     end
 
+    def wait_for_state(&block)
+        while not yield
+            sleep 10
+        end
+
+        true
+
+    rescue Exception => e
+        puts e.to_s
+        puts e.backtrace
+        false
+    end
+
     def vm_exists?(&block)
         if @vm_exists == nil
             # search for the VM in the VC
@@ -344,18 +370,35 @@ class Host < BaseVIMObject
         @ip != nil
     end
 
+    def verify_state(&block)
+        return true if $options[:dryrun]
+
+        state = nil
+        vm_state = get_vm_state(@folder, @vm_name) do |power, ip|
+            state = power =="poweredOn"
+            @ip = ip if ip and ip.length > 0
+            yield :msg => "#{@fqdn} state is <#{power}, #{@ip}>"
+        end
+
+        state and @ip
+
+    rescue Exception => e
+        puts e.to_s
+        puts e.backtrace
+        false
+    end
+
     def answers_ping?(&block)
-        # Ping will do a TCP based echo to port 7. The machine doesn't have to
-        # actually listen on that port, as actively rejecting the connection
-        # attempt is good enough to mean that the host is up.
+        return true if $options[:dryrun]
+
         if !@pingable
             service = @template.os != "windows" ? 22 : 3389
 
             if $options[:verbose]
-                yield :msg => "#{@fqdn}: pinging #{@address}:#{service}"
+                yield :msg => "#{@fqdn}: pinging #{@ip}:#{service}"
             end
 
-            @pingable = Net::Ping::TCP.new(@address, service).ping?
+            @pingable = Net::Ping::TCP.new(@ip, service).ping?
 
             if !@pingable
                 yield :msg => "#{@fqdn}: host is not responding to ping"
@@ -363,38 +406,10 @@ class Host < BaseVIMObject
         end
 
         @pingable != nil and @pingable != false
-    rescue
+    rescue Exception => e
         puts e.to_s
-    end
-
-    def wait_for_ping(&block)
-        if $options[:dryrun]
-            count = 5
-            while count > 0
-                count -= 1
-                sleep 5
-            end
-        else
-            while not answers_ping?(&block)
-                sleep 10
-            end
-        end
-
-        true
-    end
-
-    def dns_resolvable?(&block)
-        # Resolve the FQDN
-        if @ip == nil
-            begin
-                @ip = Resolv.getaddress(@fqdn)
-            rescue Resolv::ResolvError => re
-                yield :msg => "Failed to resolve host name #{@fqdn}"
-                false
-            end
-        end
-
-        @ip != nil
+        puts e.backtrace
+        false
     end
 
     def remove_client(&block)
@@ -622,20 +637,36 @@ class Host < BaseVIMObject
                     end
                 end,
                 :next => {
-                    true => {:state => :ready_for_bootstrap, :msg => "VM provisioned" },
+                    true => {:state => :wait_for_power_on, :msg => "VM provisioned" },
                     false => {:state => :error, :msg => "Provisioning failed" }
+                }
+            },
+            :wait_for_power_on => {
+                :task => Task.new(:thread) do |task, kwargs|
+                    self.wait_for_state do 
+                        self.verify_state do |dict|
+                            task.set_rc(dict[:rc]) if dict[:rc] != nil
+                            task.send_message(dict[:msg]) if dict[:msg] != nil
+                        end
+                    end
+                end,
+                :next => {
+                    true => {:state => :ready_for_bootstrap, :msg => "Host is up & running" },
+                    false => {:state => :error, :msg => "failed to query VM state" }
                 }
             },
             :ready_for_bootstrap => {
                 :task => Task.new(:thread) do |task, kwargs|
-                    self.wait_for_ping do |dict|
-                        task.set_rc(dict[:rc]) if dict[:rc] != nil
-                        task.send_message(dict[:msg]) if dict[:msg] != nil
+                    self.wait_for_state do 
+                        self.answers_ping? do |dict|
+                            task.set_rc(dict[:rc]) if dict[:rc] != nil
+                            task.send_message(dict[:msg]) if dict[:msg] != nil
+                        end
                     end
                 end,
                 :next => {
                     true => {:state => :bootstrap, :msg => "Host is up & running" },
-                    false => {:state => :ready_for_bootstrap, :msg => "VM does not respond to network ping" }
+                    false => {:state => :error, :msg => "VM does not respond to network ping" }
                 }
             },
             :bootstrap => {
