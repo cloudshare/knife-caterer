@@ -13,4 +13,5 @@ Gem::Specification.new do |s|
 
   s.add_dependency('knife-vsphere', [">= 0.2.3"])
   s.add_dependency('celluloid', [">= 0.12.3"])
+  s.add_dependency('net-ssh', [">= 2.5.2"])
 end
