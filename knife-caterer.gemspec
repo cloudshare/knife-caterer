@@ -12,4 +12,5 @@ Gem::Specification.new do |s|
     'http://rubygems.org/gems/knife-caterer'
 
   s.add_dependency('knife-vsphere', [">= 0.2.3"])
+  s.add_dependency('celluloid', [">= 0.12.3"])
 end

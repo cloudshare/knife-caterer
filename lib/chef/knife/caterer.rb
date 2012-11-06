@@ -8,8 +8,6 @@ class Chef
 
             deps do
                 require 'chef/shef/ext'
-                require 'thread'
-                require 'net/ping/tcp'
             end
 
             option :composition,
@@ -24,12 +22,13 @@ class Chef
 
             option :start_phase,
                 :short => "-s",
-                :long => "--phase-start PHASENUM",
-                :description => "Start with this phase (default:0)"
+                :long => "--start-phase PHASENUM",
+                :description => "Start with this phase (default:0)",
+                :default => 0
 
             option :final_phase,
                 :short => "-f",
-                :long => "--phase-final PHASENUM",
+                :long => "--final-phase PHASENUM",
                 :description => "Stop at this phase"
 
             option :dryrun,
@@ -37,21 +36,43 @@ class Chef
                 :long => "--dry-run",
                 :description => "Run simulation only, take no action"
 
-            def read_composition()
+            option :calculate,
+                :short => "-c",
+                :long => "--calculate-only",
+                :description => "Calculate actions only, take no action"
 
-                @actors = Hash.new { |hash, key| hash[key] = [] }
+            def read_composition
+
+                @phases = Hash.new { |phases, phase| phases[phase] = Hash.new { |actors, name| actors[name] = [] } }
                 @tasks = Hash.new { |hash, key| hash[key] = [] }
                 @templates = {}
                 @networks = {}
                 @last_phase = 0
 
+                if config[:dryrun]
+                    simulation_mode = :dryrun
+                elsif config[:calculate]
+                    simulation_mode = :calc
+                else
+                    simulation_mode = nil
+                end
+
                 db = data_bag_item(config[:environment], config[:composition])
 
-                @vc = db["vc"]
+                db["vc"].each_pair do |vc, props|
+                    @vc = Hypervisor.new(vc,
+                                         props['host'],
+                                         props['type'],
+                                         :template_folder => props['template-folder'],
+                                         :datastore => props['datastore'],
+                                         :vm_folder => props['vm-folder'],
+                                         :resource_pool => props['resource-pool'])
+                end
 
                 db["networks"].each_pair do |network, props|
 
                     @networks[network.to_sym] = Network.new(props['vlan'],
+                                                            @vc,
                                                             props['dns'],
                                                             props['subnet'],
                                                             props['gateway'],
@@ -61,11 +82,10 @@ class Chef
                 db["templates"].each_pair do |template, props|
 
                     @templates[template.to_sym] = Template.new(props['name'],
-                                                            props['vc'],
-                                                            props['user'],
-                                                            props['key'],
-                                                            props['os'],
-                                                            @vc[props['vc']]['template-folder'])
+                                                               @vc,
+                                                               props['user'],
+                                                               props['key'],
+                                                               props['os'])
                 end
 
                 db["actors"].each_pair do |actor, props|
@@ -81,27 +101,29 @@ class Chef
 
                         host = Host.new(actor,
                                         instance + 1, 
-                                        $options[:environment],
+                                        config[:environment],
                                         @networks[props["networks"][0].to_sym].domain,
-                                        props["roles"],
-                                        props["networks"].collect {|net| @networks[net.to_sym]},
+                                        props["run-list"],
+                                        props["networks"].collect { |net| @networks[net.to_sym] },
                                         @templates[props["template"].to_sym],
                                         props["cpus"],
                                         props["memoryGB"],
                                         address,
-                                        props["phase"],
                                         props["acceptance-test"],
-                                        @vc[@templates[props["template"].to_sym].vc]['vm-folder'],
-                                        @vc[@templates[props["template"].to_sym].vc]['resource-pool'])
+                                        @vc,
+                                        simulation_mode)
 
-                        @actors[actor] << host
+                        @phases[props["phase"].to_i][actor] << host
                     end
                 end
 
-                @last_phase = $options[:final_phase] if $options.has_key?(:final_phase)
+                @last_phase = config[:final_phase].to_i if config.has_key?(:final_phase)
+                puts "last phsae will be #{@last_phase}" if config[:verbosity]
             end
 
-            def run()
+            def run
+                $stdout.sync = true
+
                 if config[:verbosity]
                     puts "Starting Caterer run"
                 end
@@ -110,42 +132,94 @@ class Chef
 
                 read_composition()
 
-                repeat = true
-                phase = $options[:start_phase]
+                ui.output(@phases)
 
-                while repeat
-                    repeat = false
-                    progress_made = false
+                run_phases = @phases.keys.sort.select do |phase|
+                    phase >= config[:start_phase] and phase <= @last_phase
+                end
 
-                    @actors.each_pair do |name, hosts|
+                status = {}
+                status[:phases] = Hash.new { |phases, phase| phases[phase] = Hash.new { |actors, name| actors[name] = {} } }
 
+                @phases.each_pair do |phase, actors|
+                    actors.each_pair do |name, hosts|
                         hosts.each do |host|
-
-                            next if host.phase != phase
-
-                            host_in_progress, host_made_progress, status = host.run()
-
-                            repeat ||= host_in_progress
-                            progress_made ||= host_made_progress
-                        end
-                    end
-
-                    if repeat
-                        if !progress_made
-                            sleep(1)
-                        else
-                            ui.output(@actors)
-                        end
-                    else
-                        phase += 1
-
-                        if phase <= @last_phase
-                            repeat = true
+                            status[:phases][phase][name][host.fqdn] = host.state
                         end
                     end
                 end
+                status[:updated] = true
+                status[:messages] = []
 
-                ui.output(@actors)
+                run_phases.each do |phase|
+
+                    futures = {}
+                    completed = []
+                    states = []
+
+                    @phases[phase].each_pair do |name, hosts|
+                        hosts.each do |host|
+                            futures[host] = {
+                                :future => host.future.runner,
+                                :name => host.fqdn,
+                                :actor => name
+                            }
+                            states << host.state
+                        end
+                    end
+
+                    puts "Waiting on #{futures.length} future(s)"
+                    while futures.length > completed.length
+                        completed = futures.values.select { |dict| dict[:future].ready? }
+
+                        futures.each_pair do |host, dict|
+                            host.async.state do |state|
+                                if status[:phases][phase][dict[:actor]][dict[:name]] != state
+                                    status[:phases][phase][dict[:actor]][dict[:name]] = state
+                                    status[:updated] = true
+                                end
+                            end
+
+                            host.messages.async.delete_if do |msg|
+                                if msg.respond_to? :gsub
+                                    status[:messages] << msg.gsub(/^/, "#{dict[:name]}: ")
+
+                                elsif msg.is_a? Array
+                                    msg.each do |m|
+                                        status[:messages] << m.gsub(/^/, "#{dict[:name]}: ")
+                                    end
+                                end
+                            end
+                        end
+
+                        if status[:updated]
+                            ui.output(status[:phases])
+                            status[:updated] = false
+                            puts "Waiting for #{futures.length - completed.length} more future(s) to finish"
+
+                        elsif status[:messages].length > 0
+                            status[:messages].delete_if { |msg| puts msg or true }
+
+                        else
+                            sleep 1
+                        end
+                    end
+
+                    futures.delete_if { |host, dict| host.success }
+
+                    ui.output(status[:phases])
+
+                    if futures.length > 0
+                        # some host failed
+                        futures.keys.each { |host| host.messages.delete_if { |msg| puts msg or true } }
+                        ui.output(futures.keys)
+                        break
+                    end
+                end
+
+            rescue Exception => e
+                puts e.to_s
+                puts e.backtrace
             end
         end
     end
