@@ -1,8 +1,11 @@
 require 'chef/knife'
+require 'catering'
 
 class Chef
     class Knife
         class Caterer < Knife
+
+            include Catering
 
             banner = 'knife caterer'
 
@@ -45,6 +48,7 @@ class Chef
 
                 @phases = Hash.new { |phases, phase| phases[phase] = Hash.new { |actors, name| actors[name] = [] } }
                 @tasks = Hash.new { |hash, key| hash[key] = [] }
+                @hypervisors = {}
                 @templates = {}
                 @networks = {}
                 @last_phase = 0
@@ -60,32 +64,23 @@ class Chef
                 db = data_bag_item(config[:environment], config[:composition])
 
                 db["vc"].each_pair do |vc, props|
-                    @vc = Hypervisor.new(vc,
-                                         props['host'],
-                                         props['type'],
-                                         :template_folder => props['template-folder'],
-                                         :datastore => props['datastore'],
-                                         :vm_folder => props['vm-folder'],
-                                         :resource_pool => props['resource-pool'])
+                    @hypervisors[vc] = Catering::Hypervisor.new(Mash.new(props))
                 end
 
                 db["networks"].each_pair do |network, props|
 
-                    @networks[network.to_sym] = Network.new(props['vlan'],
-                                                            @vc,
-                                                            props['dns'],
-                                                            props['subnet'],
-                                                            props['gateway'],
-                                                            props['domain'])
+                    options = Mash.new(props)
+                    options[:hypervisor] = @hypervisors[props['vc']]
+
+                    @networks[network.to_sym] = Catering::Network.new(options)
                 end
 
                 db["templates"].each_pair do |template, props|
 
-                    @templates[template.to_sym] = Template.new(props['name'],
-                                                               @vc,
-                                                               props['user'],
-                                                               props['key'],
-                                                               props['os'])
+                    options = Mash.new(props)
+                    options[:hypervisor] = @hypervisors[props['vc']]
+
+                    @templates[template.to_sym] = Catering::Template.new(options[:name], options)
                 end
 
                 db["actors"].each_pair do |actor, props|
@@ -99,19 +94,22 @@ class Chef
                             address = props["addresses"][instance]
                         end
 
-                        host = Host.new(actor,
-                                        instance + 1, 
-                                        config[:environment],
-                                        @networks[props["networks"][0].to_sym].domain,
-                                        props["run-list"],
-                                        props["networks"].collect { |net| @networks[net.to_sym] },
-                                        @templates[props["template"].to_sym],
-                                        props["cpus"],
-                                        props["memoryGB"],
-                                        address,
-                                        props["acceptance-test"],
-                                        @vc,
-                                        simulation_mode)
+                        vc = instance.modulo props['vcs'].length
+                        host = Catering::Host.new(
+                                    actor,
+                                    instance + 1, 
+                                    config[:environment],
+                                    @networks[props["networks"][0].to_sym].domain,
+                                    props["run-list"],
+                                    props["networks"].collect { |net| @networks[net.to_sym] },
+                                    @templates[props["template"].to_sym],
+                                    props["cpus"],
+                                    props["memoryGB"],
+                                    address,
+                                    props["acceptance-test"],
+                                    @hypervisors[props['vcs'][vc]],
+                                    simulation_mode
+                        )
 
                         @phases[props["phase"].to_i][actor] << host
                     end
@@ -122,20 +120,21 @@ class Chef
             end
 
             def run
-                $stdout.sync = true
-
-                if config[:verbosity]
-                    puts "Starting Caterer run"
-                end
+                puts "Starting Caterer run"
 
                 Shef::Extensions.extend_context_object(self)
 
+                puts "Reading environment composition"
                 read_composition()
 
                 ui.output(@phases)
 
+                if config[:phase]
+                    config[:start_phase] = config[:phase]
+                end
+
                 run_phases = @phases.keys.sort.select do |phase|
-                    phase >= config[:start_phase] and phase <= @last_phase
+                    phase >= config[:start_phase].to_i and phase <= @last_phase
                 end
 
                 status = {}
@@ -180,13 +179,17 @@ class Chef
                                 end
                             end
 
-                            host.messages.async.delete_if do |msg|
-                                if msg.respond_to? :gsub
-                                    status[:messages] << msg.gsub(/^/, "#{dict[:name]}: ")
+                            host.async.process_messages do |msg|
+                                if msg.is_a? Array
+                                    time, text = msg
 
-                                elsif msg.is_a? Array
-                                    msg.each do |m|
-                                        status[:messages] << m.gsub(/^/, "#{dict[:name]}: ")
+                                    if text.respond_to? :gsub
+                                        status[:messages] << text.gsub(/^/, "[#{time}] #{dict[:name]}: ")
+
+                                    elsif msg.is_a? Array
+                                        text.each do |m|
+                                            status[:messages] << m.gsub(/^/, "[#{time}] #{dict[:name]}: ")
+                                        end
                                     end
                                 end
                             end
@@ -195,7 +198,6 @@ class Chef
                         if status[:updated]
                             ui.output(status[:phases])
                             status[:updated] = false
-                            puts "Waiting for #{futures.length - completed.length} more future(s) to finish"
 
                         elsif status[:messages].length > 0
                             status[:messages].delete_if { |msg| puts msg or true }
@@ -205,13 +207,17 @@ class Chef
                         end
                     end
 
+                    if status[:messages].length > 0
+                        status[:messages].delete_if { |msg| puts msg or true }
+                    end
+
                     futures.delete_if { |host, dict| host.success }
 
                     ui.output(status[:phases])
 
                     if futures.length > 0
                         # some host failed
-                        futures.keys.each { |host| host.messages.delete_if { |msg| puts msg or true } }
+                        futures.keys.each { |host| host.process_messages { |msg| puts msg or true } }
                         ui.output(futures.keys)
                         break
                     end
