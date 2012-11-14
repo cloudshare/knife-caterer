@@ -110,7 +110,7 @@ module Catering
             # use a future for this long IO operation so as not to block the
             # host from processing messages and status queries/updates
             future = Celluloid::Future.new do
-                Net::SSH.start(@host, @user, :keys => [@identity_file]) do |ssh|
+                Net::SSH.start(@host, @user, :keys => [ @identity_file ], :user_known_hosts_file => [ "/dev/null" ], :paranoid => false) do |ssh|
                     output, exit_code, signal =  ssh_exec!(ssh) do |data|
                         yield data
                     end
