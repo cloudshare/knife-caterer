@@ -381,7 +381,7 @@ module Catering
 
         def powered_on?
             vm = @hypervisor.find_vm(@fqdn)
-            vm && vm.powered_on?
+            vm and vm.powered_on?
 
         rescue Exception => e
             puts e.to_s
@@ -558,7 +558,7 @@ module Catering
 
                     @messages.async.<< [Time.new, "test_#{test['tester']} returned #{test_result.inspect}"] if not test_result.nil?
 
-                    test_result && true
+                    true if test_result
 
                 rescue Exception => e
                     @messages.async.<< [Time.new, e.to_s]

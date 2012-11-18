@@ -255,7 +255,7 @@ module Catering
                             progress = 0
 
                             task.wait_for_progress do |p|
-                                if not p.nil? && p.to_i >= progress
+                                if !p.nil? && p.to_i >= progress
                                     yield "#{p}% complete"
                                     progress = p + 10
                                 end
@@ -264,7 +264,7 @@ module Catering
                     end
 
                     vm = find_in_folder(folder, RbVmomi::VIM::VirtualMachine, name)
-                    if not vm && block_given?
+                    if !vm && block_given?
                         yield "VM #{name} not found"
                         false
 
