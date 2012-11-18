@@ -100,7 +100,7 @@ module Catering
             # host from processing messages and status queries/updates
             future = Celluloid::Future.new do
                 Net::SSH.start(@host, @user, :keys => [ @identity_file ], :user_known_hosts_file => [ '/dev/null' ], :paranoid => false) do |ssh|
-                    output, exit_code, signal =  ssh_exec!(ssh) { |data| yield data }
+                    output, exit_code =  ssh_exec!(ssh) { |data| yield data }
 
                     raise BootstrapError, "#{output}\nexit code: #{exit_code}" if exit_code != 0
                 end if not @simulate
