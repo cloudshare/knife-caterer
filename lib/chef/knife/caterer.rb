@@ -14,35 +14,35 @@ class Chef
             end
 
             option :composition,
-                :short => "-d",
-                :long => "--composition DESCRIPTION",
-                :description => "Environment composition"
+                :short => '-d',
+                :long => '--composition DESCRIPTION',
+                :description => 'Environment composition'
 
             option :phase,
-                :short => "-p",
-                :long => "--phase PHASENUM",
-                :description => "Only run this phase"
+                :short => '-p',
+                :long => '--phase PHASENUM',
+                :description => 'Only run this phase'
 
             option :start_phase,
-                :short => "-s",
-                :long => "--start-phase PHASENUM",
-                :description => "Start with this phase (default:0)",
+                :short => '-s',
+                :long => '--start-phase PHASENUM',
+                :description => 'Start with this phase (default:0)',
                 :default => 0
 
             option :final_phase,
-                :short => "-f",
-                :long => "--final-phase PHASENUM",
-                :description => "Stop at this phase"
+                :short => '-f',
+                :long => '--final-phase PHASENUM',
+                :description => 'Stop at this phase'
 
             option :dryrun,
-                :short => "-n",
-                :long => "--dry-run",
-                :description => "Run simulation only, take no action"
+                :short => '-n',
+                :long => '--dry-run',
+                :description => 'Run simulation only, take no action'
 
             option :calculate,
-                :short => "-c",
-                :long => "--calculate-only",
-                :description => "Calculate actions only, take no action"
+                :short => '-c',
+                :long => '--calculate-only',
+                :description => 'Calculate actions only, take no action'
 
             def read_composition
 
@@ -63,11 +63,9 @@ class Chef
 
                 db = data_bag_item(config[:environment], config[:composition])
 
-                db["vc"].each_pair do |vc, props|
-                    @hypervisors[vc] = Catering::Hypervisor.new(Mash.new(props))
-                end
+                db['vc'].each_pair { |vc, props| @hypervisors[vc] = Catering::Hypervisor.new(Mash.new(props)) }
 
-                db["networks"].each_pair do |network, props|
+                db['networks'].each_pair do |network, props|
 
                     options = Mash.new(props)
                     options[:hypervisor] = @hypervisors[props['vc']]
@@ -75,7 +73,7 @@ class Chef
                     @networks[network.to_sym] = Catering::Network.new(options)
                 end
 
-                db["templates"].each_pair do |template, props|
+                db['templates'].each_pair do |template, props|
 
                     options = Mash.new(props)
                     options[:hypervisor] = @hypervisors[props['vc']]
@@ -83,35 +81,32 @@ class Chef
                     @templates[template.to_sym] = Catering::Template.new(options[:name], options)
                 end
 
-                db["actors"].each_pair do |actor, props|
+                db['actors'].each_pair do |actor, props|
 
                     @last_phase = props['phase'] if props['phase'] > @last_phase
 
-                    props["instances"].times do |instance|
+                    props['instances'].times do |instance|
 
-                        address = nil
-                        if props["addresses"].length > 0
-                            address = props["addresses"][instance]
-                        end
+                        address = props['addresses'].length > 0 ? props['addresses'][instance] : nil
 
                         vc = instance.modulo props['vcs'].length
                         host = Catering::Host.new(
                                     actor,
                                     instance + 1, 
                                     config[:environment],
-                                    @networks[props["networks"][0].to_sym].domain,
-                                    props["run-list"],
-                                    props["networks"].collect { |net| @networks[net.to_sym] },
-                                    @templates[props["template"].to_sym],
-                                    props["cpus"],
-                                    props["memoryGB"],
+                                    @networks[props['networks'][0].to_sym].domain,
+                                    props['run-list'],
+                                    props['networks'].collect { |net| @networks[net.to_sym] },
+                                    @templates[props['template'].to_sym],
+                                    props['cpus'],
+                                    props['memoryGB'],
                                     address,
-                                    props["acceptance-test"],
+                                    props['acceptance-test'],
                                     @hypervisors[props['vcs'][vc]],
                                     simulation_mode
                         )
 
-                        @phases[props["phase"].to_i][actor] << host
+                        @phases[props['phase'].to_i][actor] << host
                     end
                 end
 
@@ -120,22 +115,18 @@ class Chef
             end
 
             def run
-                puts "Starting Caterer run"
+                puts 'Starting Caterer run'
 
                 Shef::Extensions.extend_context_object(self)
 
-                puts "Reading environment composition"
+                puts 'Reading environment composition'
                 read_composition()
 
                 ui.output(@phases)
 
-                if config[:phase]
-                    config[:start_phase] = config[:phase]
-                end
+                config[:start_phase] = config[:phase] if config[:phase]
 
-                run_phases = @phases.keys.sort.select do |phase|
-                    phase >= config[:start_phase].to_i and phase <= @last_phase
-                end
+                run_phases = @phases.keys.sort.select { |phase| phase >= config[:start_phase].to_i && phase <= @last_phase }
 
                 status = {}
                 status[:phases] = Hash.new { |phases, phase| phases[phase] = Hash.new { |actors, name| actors[name] = {} } }
@@ -187,9 +178,7 @@ class Chef
                                         status[:messages] << text.gsub(/^/, "[#{time}] #{dict[:name]}: ")
 
                                     elsif msg.is_a? Array
-                                        text.each do |m|
-                                            status[:messages] << m.gsub(/^/, "[#{time}] #{dict[:name]}: ")
-                                        end
+                                        text.each { |m| status[:messages] << m.gsub(/^/, "[#{time}] #{dict[:name]}: ") }
                                     end
                                 end
                             end
@@ -200,7 +189,7 @@ class Chef
                             status[:updated] = false
 
                         elsif status[:messages].length > 0
-                            status[:messages].delete_if { |msg| puts msg or true }
+                            status[:messages].delete_if { |msg| puts msg || true }
 
                         else
                             sleep 1
@@ -208,7 +197,7 @@ class Chef
                     end
 
                     if status[:messages].length > 0
-                        status[:messages].delete_if { |msg| puts msg or true }
+                        status[:messages].delete_if { |msg| puts msg || true }
                     end
 
                     futures.delete_if { |host, dict| host.success }
@@ -217,7 +206,7 @@ class Chef
 
                     if futures.length > 0
                         # some host failed
-                        futures.keys.each { |host| host.process_messages { |msg| puts msg or true } }
+                        futures.keys.each { |host| host.process_messages { |msg| puts msg || true } }
                         ui.output(futures.keys)
                         break
                     end

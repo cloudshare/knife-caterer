@@ -33,10 +33,9 @@ module Catering
 
             template = IO.read(options[:template_file]).chomp
             context = Chef::Knife::Core::BootstrapContext.new(bootstrap_config, options[:run_list], Chef::Config)
+
             @command = Erubis::Eruby.new(template).evaluate(context)
-            if options[:use_sudo]
-                @command = "sudo #{@command}"
-            end
+            @command = "sudo #{@command}" if options[:use_sudo]
 
             @host = options.has_key?(:address) ? options[:address] : fqdn
             @user = user
@@ -68,37 +67,27 @@ module Catering
         #       # => ["", "", 1, nil]
         #     end
         def ssh_exec!(ssh)
-            output_data = ""
+            output_data = ''
             exit_code = nil
             exit_signal = nil
 
             ssh.open_channel do |channel|
                 channel.exec(@command) do |ch, success|
-                    unless success
-                        abort "FAILED: couldn't execute command (ssh.channel.exec)"
-                    end
+                    abort "FAILED: couldn't execute command (ssh.channel.exec)" unless success
 
-                    channel.on_data do |ch, data|
+                    channel.on_data do |_, data|
                         output_data += data
-                        if block_given?
-                            yield data
-                        end
+                        yield data if block_given?
                     end
 
-                    channel.on_extended_data do |ch, type, data|
+                    channel.on_extended_data do |_, type, data|
                         output_data += data
-                        if block_given?
-                            yield data
-                        end
+                        yield data if block_given?
                     end
 
-                    channel.on_request("exit-status") do |ch, data|
-                        exit_code = data.read_long
-                    end
+                    channel.on_request('exit-status') { |_, data| exit_code = data.read_long }
 
-                    channel.on_request("exit-signal") do |ch, data|
-                        exit_signal = data.read_long
-                    end
+                    channel.on_request('exit-signal') { |_, data| exit_signal = data.read_long }
                 end
             end
 
@@ -110,14 +99,10 @@ module Catering
             # use a future for this long IO operation so as not to block the
             # host from processing messages and status queries/updates
             future = Celluloid::Future.new do
-                Net::SSH.start(@host, @user, :keys => [ @identity_file ], :user_known_hosts_file => [ "/dev/null" ], :paranoid => false) do |ssh|
-                    output, exit_code, signal =  ssh_exec!(ssh) do |data|
-                        yield data
-                    end
+                Net::SSH.start(@host, @user, :keys => [ @identity_file ], :user_known_hosts_file => [ '/dev/null' ], :paranoid => false) do |ssh|
+                    output, exit_code, signal =  ssh_exec!(ssh) { |data| yield data }
 
-                    if exit_code != 0
-                        raise BootstrapError, "#{output}\nexit code: #{exit_code}"
-                    end
+                    raise BootstrapError, "#{output}\nexit code: #{exit_code}" if exit_code != 0
                 end if not @simulate
             end
 

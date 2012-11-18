@@ -25,7 +25,7 @@ module Catering
         end
 
         def ip
-            @vm.guest.ipAddress if @vm.guest.ipAddress and @vm.guest.ipAddress.length > 0
+            @vm.guest.ipAddress if @vm.guest.ipAddress && @vm.guest.ipAddress.length > 0
         end
 
         def config
@@ -124,10 +124,10 @@ module Catering
             state :locate_vm, :to => [:runtime_state, :provision] do
                 # try to find the VM in the hypervisor
                 if actor.vm_exists?
-                    actor.messages.async.<< [Time.new, "VM found"]
+                    actor.messages.async.<< [Time.new, 'VM found']
                     transition :runtime_state
                 else
-                    actor.messages.async.<< [Time.new, "VM not found"]
+                    actor.messages.async.<< [Time.new, 'VM not found']
                     transition :provision
                 end
             end
@@ -135,11 +135,11 @@ module Catering
             state :runtime_state, :to => [:powered_off, :networking_down, :check_connectivity] do
                 # check the VM's runtime state (power and IP)
                 if not actor.powered_on?
-                    actor.messages.async.<< [Time.new, "VM is powered off"]
+                    actor.messages.async.<< [Time.new, 'VM is powered off']
                     transition :powered_off
 
                 elsif not actor.ip
-                    actor.messages.async.<< [Time.new, "VM has no IP address"]
+                    actor.messages.async.<< [Time.new, 'VM has no IP address']
                     transition :networking_down
 
                 else
@@ -150,10 +150,10 @@ module Catering
             state :check_connectivity, :to => [:verify, :disconnected] do
                 # check networking connectivity to the VM
                 if actor.answers_ping?
-                    actor.messages.async.<< [Time.new, "VM responds to network ping"]
+                    actor.messages.async.<< [Time.new, 'VM responds to network ping']
                     transition :verify
                 else
-                    actor.messages.async.<< [Time.new, "VM does not respond to network ping"]
+                    actor.messages.async.<< [Time.new, 'VM does not respond to network ping']
                     transition :disconnected
                 end
             end
@@ -163,15 +163,15 @@ module Catering
                 status = actor.is_ready?
 
                 if status
-                    actor.messages.async.<< [Time.new, "acceptance test passed"]
+                    actor.messages.async.<< [Time.new, 'acceptance test passed']
                     transition :verified
 
                 elsif status.nil?
-                    actor.messages.async.<< [Time.new, "no acceptance test provided"]
+                    actor.messages.async.<< [Time.new, 'no acceptance test provided']
                     transition :running
 
                 else
-                    actor.messages.async.<< [Time.new, "acceptance test failed"]
+                    actor.messages.async.<< [Time.new, 'acceptance test failed']
                     transition :acceptance_failed
                 end
             end
@@ -179,19 +179,19 @@ module Catering
             state :provision, :to => [:customizing, :prerequisites, :provisioning_failure] do
                 # verify the prerequisites are met, and provision a new VM
                 missing_networks = actor.networks.reject { |net| net.exists? }
-                if not actor.template.exists? or missing_networks.size > 0
-                    actor.messages.async.<< [Time.new, "missing required template or network"]
+                if not actor.template.exists? || missing_networks.size > 0
+                    actor.messages.async.<< [Time.new, 'missing required template or network']
                     transition :prerequisites
 
-                elsif not actor.simulate and not actor.remove_client
-                    actor.messages.async.<< [Time.new, "failed to remove client from Chef server"]
+                elsif !actor.simulate && !actor.remove_client
+                    actor.messages.async.<< [Time.new, 'failed to remove client from Chef server']
                     transition :prerequisites
 
                 elsif actor.simulate == :calc
-                    actor.messages.async.<< [Time.new, "needs to be provisioned"]
+                    actor.messages.async.<< [Time.new, 'needs to be provisioned']
 
                 elsif not actor.provision
-                    actor.messages.async.<< [Time.new, "VM provisioning failed"]
+                    actor.messages.async.<< [Time.new, 'VM provisioning failed']
                     transition :provisioning_failure
 
                 else
@@ -201,11 +201,11 @@ module Catering
 
             state :customizing, :to => [:verify_connectivity, :customization_timeout] do
                 # wait for the customization to complete (power on & IP)
-                actor.messages.async.<< [Time.new, "waiting for VM customization to complete"]
+                actor.messages.async.<< [Time.new, 'waiting for VM customization to complete']
                 
                 begin
                     status = Timeout::timeout(5 * 60) do
-                        sleep 10 until actor.simulate or (actor.powered_on? and actor.ip)
+                        sleep 10 until actor.simulate || (actor.powered_on? && actor.ip)
                         true
                     end
 
@@ -214,11 +214,11 @@ module Catering
                 end
 
                 if status
-                    actor.messages.async.<< [Time.new, "VM customization complete"]
+                    actor.messages.async.<< [Time.new, 'VM customization complete']
                     transition :verify_connectivity
 
                 else
-                    actor.messages.async.<< [Time.new, "VM customization failed"]
+                    actor.messages.async.<< [Time.new, 'VM customization failed']
                     transition :customization_timeout
                 end
             end
@@ -236,11 +236,11 @@ module Catering
                 end
 
                 if status
-                    actor.messages.async.<< [Time.new, "VM responds to network ping"]
+                    actor.messages.async.<< [Time.new, 'VM responds to network ping']
                     transition :bootstrap
 
                 else
-                    actor.messages.async.<< [Time.new, "VM does not respond to network ping"]
+                    actor.messages.async.<< [Time.new, 'VM does not respond to network ping']
                     transition :customization_failure
                 end
             end
@@ -248,14 +248,14 @@ module Catering
             state :bootstrap, :to => [:test, :bootstrapping_failure] do
                 # Bootstrap the VM with chef-client
                 if actor.simulate == :calc
-                    actor.messages.async.<< [Time.new, "requires bootstrapping"]
+                    actor.messages.async.<< [Time.new, 'requires bootstrapping']
 
                 elsif not actor.bootstrap
-                    actor.messages.async.<< [Time.new, "bootstrapping failed"]
+                    actor.messages.async.<< [Time.new, 'bootstrapping failed']
                     transition :bootstrapping_failure
 
                 else
-                    actor.messages.async.<< [Time.new, "updating node run list"]
+                    actor.messages.async.<< [Time.new, 'updating node run list']
                     actor.update_node
                     transition :test
                 end
@@ -274,25 +274,21 @@ module Catering
                 end
 
                 if status
-                    actor.messages.async.<< [Time.new, "acceptance test passed"]
+                    actor.messages.async.<< [Time.new, 'acceptance test passed']
                     transition :verified
 
                 else
                     # verification failed
-                    actor.messages.async.<< [Time.new, "acceptance test failed"]
+                    actor.messages.async.<< [Time.new, 'acceptance test failed']
                     transition :acceptance_failed
                 end
             end
 
             attr_accessor :success
 
-            handle_failure = Proc.new do
-                @success = false
-            end
+            handle_failure = Proc.new { @success = false }
 
-            handle_success = Proc.new do
-                @success = true
-            end
+            handle_success = Proc.new { @success = true }
 
             # failure end states
             state :prerequisites, &handle_failure
@@ -365,7 +361,7 @@ module Catering
 
 
         def process_messages(&block)
-            @messages.delete_if &block
+            @messages.delete_if(&block)
         end
 
 
@@ -385,7 +381,7 @@ module Catering
 
         def powered_on?
             vm = @hypervisor.find_vm(@fqdn)
-            vm and vm.powered_on?
+            vm && vm.powered_on?
 
         rescue Exception => e
             puts e.to_s
@@ -404,18 +400,14 @@ module Catering
 
 
         def answers_ping?
-            service = @template.os != "windows" ? 22 : 3389
+            service = @template.os != 'windows' ? 22 : 3389
             host = @address.nil? ? @fqdn : @address
 
-            if Chef::Config[:verbosity]
-                @messages.async.<< [Time.new, "pinging #{host}:#{service}"]
-            end
+            @messages.async.<< [Time.new, "pinging #{host}:#{service}"] if Chef::Config[:verbosity]
 
             pingable = Net::Ping::TCP.new(host, service).ping?
 
-            if !pingable
-                @messages.async.<< [Time.new, "host is not responding to ping"]
-            end
+            @messages.async.<< [Time.new, 'host is not responding to ping'] if !pingable
 
             pingable
 
@@ -428,9 +420,7 @@ module Catering
         def remove_client
             if not @simulate
                 clients = @rest_client.get_rest('/clients')
-                if clients.has_key?(@fqdn)
-                    @rest_client.delete_rest(clients[@fqdn])
-                end
+                @rest_client.delete_rest(clients[@fqdn]) if clients.has_key?(@fqdn)
 
                 !@rest_client.get_rest('/clients').has_key?(@fqdn)
             else
@@ -468,11 +458,11 @@ module Catering
             @networks.length.times do |i|
                 nic = OpenStruct.new()
 
-                if @address.is_a? Array and i < @address.length and @address[i] != ""
+                if @address.is_a? Array && i < @address.length && @address[i] != ''
                     nic.ip = "#{@address[i]}/#{@networks[i].subnet.split('/')[1]}"
                     nic.gateway = @networks[i].gateway if i == 0
 
-                elsif i == 0 and not @address.nil?
+                elsif i == 0 && !@address.nil?
                     nic.ip = "#{@address}/#{@networks[i].subnet.split('/')[1]}"
                 end
 
@@ -481,12 +471,12 @@ module Catering
 
             if not @address.nil?
                 options[:customization_dns_ips] = @networks[0].dns
-                options[:customization_dns_suffixes] = @networks.map { |net| net.domain if net.domain != "" }.delete_if { |domain| domain == nil }
+                options[:customization_dns_suffixes] = @networks.map { |net| net.domain if net.domain != '' }.delete_if { |domain| domain == nil }
             end
 
             @messages.async.<< [Time.new, "Cloning from template #{@template.name}"]
             @hypervisor.clone(@template, @fqdn, options) { |msg| @messages.async.<< [Time.new, msg] }
-            @messages.async.<< [Time.new, "Finished creating virtual machine"]
+            @messages.async.<< [Time.new, 'Finished creating virtual machine']
 
             true
 
@@ -504,14 +494,12 @@ module Catering
                 :env => @env,
                 :run_list => "#{@roles}",
                 :use_sudo => @template.os == 'ubuntu',
-                :bootstrap_version => "10.12.0",
+                :bootstrap_version => '10.12.0',
                 :template_file => "#{template_dir}/bootstrap.erb",
                 :identity_file => "#{Chef::Config[:ssh_certificate_path]}/#{@template.key}"
             }
 
-            if @address
-                bootstrap_options[:address] = @address
-            end
+            bootstrap_options[:address] = @address if @address
 
             bootstrapper = CatererBootstrapper.new(@fqdn, @template.user, bootstrap_options)
             bootstrapper.run { |output| @messages.async.<< [Time.new, output] }
@@ -528,14 +516,10 @@ module Catering
         def prepare_test_args(context, args)
             if args.is_a? Hash
                 # Hash
-                args.each_pair do |key, value|
-                    args[key] = prepare_test_args(context, value)
-                end
+                args.each_pair { |key, value| args[key] = prepare_test_args(context, value) }
             elsif args.is_a? Array
                 # Array
-                args.collect do |arg|
-                    prepare_test_args(context, arg)
-                end
+                args.collect { |arg| prepare_test_args(context, arg) }
             elsif args.is_a? String
                 # String
                 Erubis::Eruby.new(args).evaluate(context)
@@ -546,12 +530,12 @@ module Catering
 
 
         def execute_test(test)
-            if test.has_key?("tester")
+            if test.has_key?('tester')
                 begin
                     require "#{Chef::Config[:tests_path]}/#{test['tester']}.rb"
                     test_result = nil
 
-                    if test.has_key?("args")
+                    if test.has_key?('args')
                         context = OpenStruct.new()
 
                         begin
@@ -572,11 +556,9 @@ module Catering
                         test_result = send("test_#{test['tester']}", @simulate == :dryrun) { |msg| @messages.async.<< [Time.new, msg] }
                     end
 
-                    if not test_result.nil?
-                        @messages.async.<< [Time.new, "test_#{test['tester']} returned #{test_result.inspect}"]
-                    end
+                    @messages.async.<< [Time.new, "test_#{test['tester']} returned #{test_result.inspect}"] if not test_result.nil?
 
-                    test_result and true
+                    test_result && true
 
                 rescue Exception => e
                     @messages.async.<< [Time.new, e.to_s]

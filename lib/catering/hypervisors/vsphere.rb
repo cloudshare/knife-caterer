@@ -83,9 +83,7 @@ module Catering
             end
 
             def find_all_in_folder(folder, type)
-                if folder.instance_of?(RbVmomi::VIM::ClusterComputeResource)
-                    folder = folder.resourcePool
-                end
+                folder = folder.resourcePool if folder.instance_of?(RbVmomi::VIM::ClusterComputeResource)
 
                 if folder.instance_of?(RbVmomi::VIM::ResourcePool)
                     folder.resourcePool.grep(type)
@@ -108,15 +106,11 @@ module Catering
                 f = find_folder(folder)
 
                 vm = find_in_folder(f, RbVmomi::VIM::VirtualMachine, vm_name)
-                if vm
-                    Catering::VirtualMachine.new(vm_name, vm)
-                end
+                Catering::VirtualMachine.new(vm_name, vm) if vm
             end
 
             def network_exists?(network)
-                nil != vim.serviceInstance.find_datacenter(@options[:vsphere_dc]).network.find do |vlan|
-                    vlan.name == network
-                end
+                nil != vim.serviceInstance.find_datacenter(@options[:vsphere_dc]).network.find { |vlan| vlan.name == network }
             end
 
             def find_network(network)
@@ -161,9 +155,7 @@ module Catering
                     rspec = RbVmomi::VIM.VirtualMachineRelocateSpec(:pool => rp)
                 end
 
-                if @options[:datastore]
-                    rspec.datastore = find_datastore(@options[:datastore])
-                end
+                rspec.datastore = find_datastore(@options[:datastore]) if @options[:datastore]
 
                 clone_spec = RbVmomi::VIM.VirtualMachineCloneSpec(
                     :location => rspec,
@@ -172,17 +164,12 @@ module Catering
                 )
                 clone_spec.config = RbVmomi::VIM.VirtualMachineConfigSpec(:deviceChange => Array.new)
 
-                if clone_options[:customization_cpucount]
-                    clone_spec.config.numCPUs = clone_options[:customization_cpucount]
-                end
-
-                if clone_options[:customization_memory]
-                    clone_spec.config.memoryMB = Integer(clone_options[:customization_memory]) * 1024
-                end
+                clone_spec.config.numCPUs = clone_options[:customization_cpucount] if clone_options[:customization_cpucount]
+                clone_spec.config.memoryMB = Integer(clone_options[:customization_memory]) * 1024 if clone_options[:customization_memory]
 
                 if clone_options[:customization_vlan]
                     network = find_network(clone_options[:customization_vlan])
-                    card = src_config.hardware.device.find { |d| d.deviceInfo.label == "Network adapter 1" } or
+                    card = src_config.hardware.device.find { |d| d.deviceInfo.label == 'Network adapter 1' } or
                         raise HypervisorError, "Can't find source network card to customize"
 
                     begin
@@ -197,7 +184,7 @@ module Catering
                         card.backing.deviceName = network.name
                     end
 
-                    dev_spec = RbVmomi::VIM.VirtualDeviceConfigSpec(:device => card, :operation => "edit")
+                    dev_spec = RbVmomi::VIM.VirtualDeviceConfigSpec(:device => card, :operation => 'edit')
                     clone_spec.config.deviceChange.push dev_spec
                 end
 
@@ -205,9 +192,7 @@ module Catering
                     csi = find_customization(clone_options[:customization_spec]) or
                         raise HypervisorError, "failed to find customization specification named #{clone_options[:customization_spec]}"
 
-                    if csi.info.type != "Linux"
-                        fatal_exit("Only Linux customization specifications are currently supported")
-                    end
+                    fatal_exit('Only Linux customization specifications are currently supported') if csi.info.type != 'Linux'
 
                     cust_spec = csi.spec
 
@@ -217,19 +202,10 @@ module Catering
                     )
                 end
 
-                if clone_options[:customization_dns_ips]
-                    cust_spec.globalIPSettings.dnsServerList = clone_options[:customization_dns_ips].split(',')
-                end
+                cust_spec.globalIPSettings.dnsServerList = clone_options[:customization_dns_ips].split(',') if clone_options[:customization_dns_ips]
+                cust_spec.globalIPSettings.dnsSuffixList = clone_options[:customization_dns_suffixes] if clone_options[:customization_dns_suffixes]
 
-                if clone_options[:customization_dns_suffixes]
-                    cust_spec.globalIPSettings.dnsSuffixList = clone_options[:customization_dns_suffixes]
-                end
-
-                if clone_options[:customization_nics]
-                    cust_spec.nicSettingMap = clone_options[:customization_nics].map do |nic|
-                        generate_adapter_map(nic)
-                    end
-                end
+                cust_spec.nicSettingMap = clone_options[:customization_nics].map { |nic| generate_adapter_map(nic) } if clone_options[:customization_nics]
 
                 use_ident = !clone_options[:customization_hostname].nil? || !clone_options[:customization_domain].nil? || cust_spec.identity.nil?
 
@@ -267,7 +243,7 @@ module Catering
                 # and the calling host for everyone else.
                 future = Celluloid::Future.new do
                     cloning_mutex.synchronize do
-                        yield "starting cloning process"
+                        yield 'starting cloning process'
 
                         if not clone_options[:simulate]
                             task = src_vm.CloneVM_Task(
@@ -279,7 +255,7 @@ module Catering
                             progress = 0
 
                             task.wait_for_progress do |p|
-                                if not p.nil? and p.to_i >= progress
+                                if not p.nil? && p.to_i >= progress
                                     yield "#{p}% complete"
                                     progress = p + 10
                                 end
@@ -288,12 +264,12 @@ module Catering
                     end
 
                     vm = find_in_folder(folder, RbVmomi::VIM::VirtualMachine, name)
-                    if not vm and block_given?
+                    if not vm && block_given?
                         yield "VM #{name} not found"
                         false
 
                     elsif not clone_options[:simulate]
-                        yield "cloning complete, waiting for machine to power on"
+                        yield 'cloning complete, waiting for machine to power on'
                         vm.PowerOnVM_Task.wait_for_completion
 
                     else

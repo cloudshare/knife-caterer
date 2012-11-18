@@ -20,7 +20,7 @@ module Catering
                 # :insecure
                 # :port
                 # :use_ssl
-                @options[:vsphere_path] ||= "/sdk"
+                @options[:vsphere_path] ||= '/sdk'
                 @options[:port] ||= 443
                 @options[:use_ssl] ||= true
 
