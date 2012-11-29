@@ -181,6 +181,8 @@ class Chef
                                         text.each { |m| status[:messages] << m.gsub(/^/, "[#{time}] #{dict[:name]}: ") }
                                     end
                                 end
+
+                                true
                             end
                         end
 
@@ -189,7 +191,7 @@ class Chef
                             status[:updated] = false
 
                         elsif status[:messages].length > 0
-                            status[:messages].delete_if { |msg| puts msg || true }
+                            status[:messages].delete_if { |msg| puts msg or true }
 
                         else
                             sleep 1
@@ -197,7 +199,7 @@ class Chef
                     end
 
                     if status[:messages].length > 0
-                        status[:messages].delete_if { |msg| puts msg || true }
+                        status[:messages].delete_if { |msg| puts msg or true }
                     end
 
                     futures.delete_if { |host, dict| host.success }
@@ -206,7 +208,7 @@ class Chef
 
                     if futures.length > 0
                         # some host failed
-                        futures.keys.each { |host| host.process_messages { |msg| puts msg || true } }
+                        futures.keys.each { |host| host.process_messages { |msg| puts msg or true } }
                         ui.output(futures.keys)
                         break
                     end

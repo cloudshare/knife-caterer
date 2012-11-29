@@ -179,7 +179,7 @@ module Catering
             state :provision, :to => [:customizing, :prerequisites, :provisioning_failure] do
                 # verify the prerequisites are met, and provision a new VM
                 missing_networks = actor.networks.reject { |net| net.exists? }
-                if not actor.template.exists? || missing_networks.size > 0
+                if !actor.template.exists? || missing_networks.size > 0
                     actor.messages.async.<< [Time.new, 'missing required template or network']
                     transition :prerequisites
 
@@ -452,13 +452,14 @@ module Catering
                 :customization_domain => @networks[0].domain,
                 :customization_cpucount => @cpu_count,
                 :customization_memory => @memoryGB,
-                :customization_nics => []
+                :customization_nics => [],
+                :resource_pool => @actor
             }
 
             @networks.length.times do |i|
                 nic = OpenStruct.new()
 
-                if @address.is_a? Array && i < @address.length && @address[i] != ''
+                if @address.is_a?(Array) && i < @address.length && @address[i] != ''
                     nic.ip = "#{@address[i]}/#{@networks[i].subnet.split('/')[1]}"
                     nic.gateway = @networks[i].gateway if i == 0
 
@@ -487,7 +488,7 @@ module Catering
         end
 
 
-        def bootstrap(&block)
+        def bootstrap
             template_dir = File.dirname(__FILE__)
             bootstrap_options = {
                 :simulate => @simulate,
