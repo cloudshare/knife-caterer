@@ -317,9 +317,9 @@ module Catering
         def initialize(actor, instance, env, domain, roles, networks, template,
                     cpu_count, memoryGB, address, accept_test, hypervisor, simulate)
 
-            @env, @networks, @template, @cpu_count, @memoryGB, @address,
+            @actor, @env, @networks, @template, @cpu_count, @memoryGB, @address,
                 @accept_test, @hypervisor, @simulate =
-                env, networks, template, cpu_count, memoryGB, address,
+                actor, env, networks, template, cpu_count, memoryGB, address,
                 accept_test, hypervisor, simulate
 
             @machine = Machine.new
