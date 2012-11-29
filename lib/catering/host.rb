@@ -204,7 +204,7 @@ module Catering
                 actor.messages.async.<< [Time.new, 'waiting for VM customization to complete']
                 
                 begin
-                    status = Timeout::timeout(5 * 60) do
+                    status = Timeout::timeout(10 * 60) do
                         sleep 10 until actor.simulate || (actor.powered_on? && actor.ip)
                         true
                     end
@@ -264,7 +264,7 @@ module Catering
             state :test, :to => [:verified, :acceptance_failed] do
                 # run acceptance tests to verify the host
                 begin
-                    status = Timeout::timeout(5 * 60) do
+                    status = Timeout::timeout(10 * 60) do
                         sleep 30 until [nil, true].include? actor.is_ready?
                         true
                     end
