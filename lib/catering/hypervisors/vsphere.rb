@@ -45,27 +45,63 @@ module Catering
                 folder_obj
             end
 
-            def find_pool(pool)
-                pool_obj = datacenter.hostFolder
-                pool_path = pool.split('/')
-                pool_path.each do |elem|
+            def traverse_path(obj, path, &block)
+                path.each do |elem|
                     if elem != ''
-                        if pool_obj.is_a? RbVmomi::VIM::Folder
-                            pool_obj = pool_obj.childEntity.find { |f| f.name == elem } or
-                                raise HypervisorError, "no such pool #{pool} while looking for #{elem}"
+                        if obj.is_a? RbVmomi::VIM::Folder
+                            obj = obj.childEntity.find { |f| f.name == elem } || yield(obj, elem)
 
-                        elsif pool_obj.is_a? RbVmomi::VIM::ClusterComputeResource
-                            pool_obj = pool_obj.resourcePool.resourcePool.find { |f| f.name == elem } or
-                                raise HypervisorError, "no such pool #{pool} while looking for #{elem}"
+                        elsif obj.is_a? RbVmomi::VIM::ClusterComputeResource
+                            obj = obj.resourcePool.resourcePool.find { |f| f.name == elem } || yield(obj, elem)
 
-                        elsif pool_obj.is_a? RbVmomi::VIM::ResourcePool
-                            pool_obj = pool_obj.resourcePool.find { |f| f.name == elem } or
-                                raise HypervisorError, "no such pool #{pool} while looking for #{elem}"
+                        elsif obj.is_a? RbVmomi::VIM::ResourcePool
+                            obj = obj.resourcePool.find { |f| f.name == elem } || yield(obj, elem)
 
                         else
-                            raise HypervisorError, "Unexpected Object type encountered #{pool_obj.type} while finding resourcePool"
+                            raise HypervisorError, "Unexpected Object type encountered #{obj.class} while finding resourcePool"
                         end
                     end
+                end
+
+                obj
+            end
+
+            def find_pool(pool, create_if_missing = false)
+                pool_obj = datacenter.hostFolder
+                pool_path = pool.split('/')
+
+                pool_obj = traverse_path(pool_obj, pool_path) do |obj, elem|
+                    if create_if_missing
+                        resource_pool_spec = {
+                            :name => elem,
+                            :spec => RbVmomi::VIM.ResourceConfigSpec(
+                                        :cpuAllocation => RbVmomi::VIM.ResourceAllocationInfo(:expandableReservation => true,
+                                                                                                :limit => -1,
+                                                                                                :reservation => 0,
+                                                                                                :shares => RbVmomi::VIM.SharesInfo(:level => 'normal',
+                                                                                                                                    :shares => 0)),
+                                        :memoryAllocation => RbVmomi::VIM.ResourceAllocationInfo(:expandableReservation => true,
+                                                                                                    :limit => -1,
+                                                                                                    :reservation => 0,
+                                                                                                    :shares => RbVmomi::VIM.SharesInfo(:level => 'normal',
+                                                                                                                                    :shares => 0)))
+                        }
+
+                        if obj.respond_to? :CreateResourcePool
+                            new_pool = obj.CreateResourcePool(resource_pool_spec)
+
+                        elsif obj.respond_to? :resourcePool
+                            new_pool = obj.resourcePool.CreateResourcePool(resource_pool_spec)
+
+                        else
+                            raise HypervisorError, "Unexpected object type #{obj.class}encountered while trying to create resource pool #{elem}"
+                        end
+
+                    else
+                        raise HypervisorError, "no such pool #{pool} while looking for #{elem}"
+                    end
+
+                    new_pool
                 end
 
                 pool_obj = pool_obj.resourcePool if not pool_obj.is_a?(RbVmomi::VIM::ResourcePool) and pool_obj.respond_to?(:resourcePool)
@@ -147,7 +183,8 @@ module Catering
                 rspec = nil
 
                 if @options[:resource_pool]
-                    rspec = RbVmomi::VIM.VirtualMachineRelocateSpec(:pool => find_pool(@options[:resource_pool]))
+                    resource_pool = clone_options.has_key?(:resource_pool) ? "#{@options[:resource_pool]}/#{clone_options[:resource_pool]}" : @options[:resource_pool]
+                    rspec = RbVmomi::VIM.VirtualMachineRelocateSpec(:pool => find_pool(resource_pool, true))
 
                 else
                     hosts = find_all_in_folder(datacenter.hostFolder, RbVmomi::VIM::ComputeResource)
