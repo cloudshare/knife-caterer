@@ -87,14 +87,20 @@ module Catering
                                                                                                                                     :shares => 0)))
                         }
 
-                        if obj.respond_to? :CreateResourcePool
-                            new_pool = obj.CreateResourcePool(resource_pool_spec)
+                        begin
+                            if obj.respond_to? :CreateResourcePool
+                                new_pool = obj.CreateResourcePool(resource_pool_spec)
 
-                        elsif obj.respond_to? :resourcePool
-                            new_pool = obj.resourcePool.CreateResourcePool(resource_pool_spec)
+                            elsif obj.respond_to? :resourcePool
+                                new_pool = obj.resourcePool.CreateResourcePool(resource_pool_spec)
 
-                        else
-                            raise HypervisorError, "Unexpected object type #{obj.class}encountered while trying to create resource pool #{elem}"
+                            else
+                                raise HypervisorError, "Unexpected object type #{obj.class} encountered while trying to create resource pool #{elem}"
+                            end
+
+                        rescue RbVmOmi::DuplicateName
+                            # wasn't there an instant ago, must have been
+                            # created by another host of the same type
                         end
 
                     else
