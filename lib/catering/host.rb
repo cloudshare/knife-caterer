@@ -495,7 +495,7 @@ module Catering
                 :env => @env,
                 :run_list => "#{@roles}",
                 :use_sudo => @template.os == 'ubuntu',
-                :bootstrap_version => '10.12.0',
+                :bootstrap_version => '10.16.2-1',
                 :template_file => "#{template_dir}/bootstrap.erb",
                 :identity_file => "#{Chef::Config[:ssh_certificate_path]}/#{@template.key}"
             }
