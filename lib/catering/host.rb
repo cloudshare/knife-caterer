@@ -344,10 +344,6 @@ module Catering
             @roles = "'#{run_list * ','}'"
 
             @@cloning_mutex ||= Mutex.new
-
-        rescue Exception => e
-            puts e.to_s
-            puts e.backtrace
         end
 
 
@@ -374,8 +370,9 @@ module Catering
             @hypervisor.vm_exists?(@fqdn)
 
         rescue Exception => e
-            puts e.to_s
-            puts e.backtrace
+            @messages.async.<< [Time.new, e.to_s]
+            @messages.async.<< [Time.new, e.backtrace]
+            false
         end
 
 
@@ -384,8 +381,9 @@ module Catering
             vm and vm.powered_on?
 
         rescue Exception => e
-            puts e.to_s
-            puts e.backtrace
+            @messages.async.<< [Time.new, e.to_s]
+            @messages.async.<< [Time.new, e.backtrace]
+            false
         end
 
 
@@ -394,8 +392,9 @@ module Catering
             vm.ip
 
         rescue Exception => e
-            puts e.to_s
-            puts e.backtrace
+            @messages.async.<< [Time.new, e.to_s]
+            @messages.async.<< [Time.new, e.backtrace]
+            false
         end
 
 
@@ -412,8 +411,9 @@ module Catering
             pingable
 
         rescue Exception => e
-            puts e.to_s
-            puts e.backtrace
+            @messages.async.<< [Time.new, e.to_s]
+            @messages.async.<< [Time.new, e.backtrace]
+            false
         end
 
 
