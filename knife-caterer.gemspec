@@ -14,4 +14,6 @@ Gem::Specification.new do |s|
   s.add_dependency('rbvmomi', ["= 1.5.1"])
   s.add_dependency('celluloid', [">= 0.12.3"])
   s.add_dependency('net-ssh', [">= 2.2.2"])
+  s.add_dependency('net-ping', [">= 1.5.3"])
+  s.add_dependency('netaddr', [">= 1.5.0"])
 end
