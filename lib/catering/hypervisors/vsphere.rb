@@ -98,7 +98,7 @@ module Catering
                                 raise HypervisorError, "Unexpected object type #{obj.class} encountered while trying to create resource pool #{elem}"
                             end
 
-                        rescue RbVmOmi::DuplicateName
+                        rescue RbVmomi::DuplicateName
                             # wasn't there an instant ago, must have been
                             # created by another host of the same type
                         end
